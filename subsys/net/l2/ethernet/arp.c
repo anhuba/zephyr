@@ -228,8 +228,16 @@ static void arp_request_timeout(struct k_work *work)
 	k_mutex_unlock(&arp_mutex);
 }
 
+static inline bool is_same_net(uint32_t addr1,
+			       uint32_t addr2,
+			       uint32_t netmask)
+{
+	return((addr1 & netmask) == (addr2 & netmask));
+}
+
 static inline struct net_in_addr *if_get_addr(struct net_if *iface,
-					  const uint8_t *addr)
+					      const uint8_t *addr,
+					      const struct net_in_addr *netaddr)
 {
 	struct net_if_ipv4 *ipv4 = iface->config.ip.ipv4;
 
@@ -243,7 +251,11 @@ static inline struct net_in_addr *if_get_addr(struct net_if *iface,
 		    ipv4->unicast[i].ipv4.addr_state == NET_ADDR_PREFERRED &&
 		    (!addr ||
 		     net_ipv4_addr_cmp_raw(
-				addr, ipv4->unicast[i].ipv4.address.in_addr.s4_addr))) {
+				addr, ipv4->unicast[i].ipv4.address.in_addr.s4_addr)) &&
+				(!netaddr ||
+				 is_same_net(netaddr->s_addr,
+					     ipv4->unicast[i].ipv4.address.in_addr.s_addr,
+					     ipv4->unicast[i].netmask.s_addr))) {
 			return &ipv4->unicast[i].ipv4.address.in_addr;
 		}
 	}
@@ -339,7 +351,7 @@ static inline struct net_pkt *arp_prepare(struct net_if *iface,
 	} else if (!entry) {
 		my_addr = (struct net_in_addr *)NET_IPV4_HDR(pending)->src;
 	} else {
-		my_addr = if_get_addr(entry->iface, (const uint8_t *)current_ip);
+		my_addr = if_get_addr(entry->iface, (const uint8_t *)current_ip, next_addr);
 	}
 
 	if (my_addr) {
@@ -852,7 +864,7 @@ enum net_verdict net_arp_input(struct net_pkt *pkt,
 		}
 
 		/* Someone wants to know our ll address */
-		addr = if_get_addr(net_pkt_iface(pkt), arp_hdr->dst_ipaddr);
+		addr = if_get_addr(net_pkt_iface(pkt), arp_hdr->dst_ipaddr, NULL);
 		if (!addr) {
 			/* Not for us so drop the packet silently */
 			return NET_DROP;
